@@ -15,6 +15,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Binary output directory
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+# Minimal background stub executable
+add_executable(discord_dummy_stub
+    src/dummy_stub.cpp
+)
+target_compile_features(discord_dummy_stub PRIVATE cxx_std_20)
+if(MSVC)
+    target_link_options(discord_dummy_stub PRIVATE /SUBSYSTEM:WINDOWS)
+endif()
+
 # Fetch Dear ImGui
 include(FetchContent)
 FetchContent_Declare(
@@ -46,7 +55,11 @@ add_executable(DiscordQuests
     src/main.cpp
     src/ui/AppWindow.cpp
     include/ui/AppWindow.hpp
+    src/core/ProcessManager.cpp
+    include/core/ProcessManager.hpp
 )
+
+add_dependencies(DiscordQuests discord_dummy_stub)
 
 target_include_directories(DiscordQuests PRIVATE
     include
