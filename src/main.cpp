@@ -55,6 +55,7 @@ int main() {
     SyncBuffersFromConfig();
 
     bool isActivityActive = false;
+    bool minimizeToTrayOnClose = window.IsMinimizeToTrayOnClose();
     std::string generalStatusMessage = "Ready";
 
     auto StartActivity = [&]() {
@@ -130,9 +131,15 @@ int main() {
         ImGui::Begin("MainPanel", nullptr, flags);
 
         // Header Title
-        ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f), "Discord Quests & Activity Emulator");
-        ImGui::SameLine(ImGui::GetWindowWidth() - 140);
-        ImGui::TextDisabled("v1.0.0 (C++20)");
+        ImGui::TextColored(ImVec4(0.35f, 0.40f, 0.95f, 1.0f), "DISCORD QUESTS");
+        ImGui::SameLine();
+        ImGui::TextDisabled("| Activity & Process Emulator");
+
+        ImGui::SameLine(ImGui::GetWindowWidth() - 150);
+        if (ImGui::SmallButton("Minimize to Tray")) {
+            window.MinimizeToTray();
+        }
+
         ImGui::Separator();
         ImGui::Spacing();
 
@@ -140,7 +147,7 @@ int main() {
             // TAB 1: Main Control
             if (ImGui::BeginTabItem("Main Activity")) {
                 ImGui::Spacing();
-                ImGui::Text("Select Emulation Mode:");
+                ImGui::TextColored(ImVec4(0.95f, 0.95f, 0.96f, 1.0f), "Select Mode:");
 
                 int currentMode = static_cast<int>(config.mode);
                 if (isActivityActive) {
@@ -157,10 +164,11 @@ int main() {
                 config.mode = static_cast<core::ActivityMode>(currentMode);
 
                 ImGui::Spacing();
-                ImGui::Text("Target Game Name:");
+                ImGui::TextColored(ImVec4(0.95f, 0.95f, 0.96f, 1.0f), "Target Game Name:");
                 if (isActivityActive) {
                     ImGui::BeginDisabled();
                 }
+                ImGui::SetNextItemWidth(-1);
                 ImGui::InputText("##GameName", gameNameBuffer, sizeof(gameNameBuffer));
                 if (isActivityActive) {
                     ImGui::EndDisabled();
@@ -170,19 +178,23 @@ int main() {
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                // Start / Stop Button
+                // Start / Stop Button with Discord-inspired colors
                 if (!isActivityActive) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
-                    if (ImGui::Button("Start Activity", ImVec2(160, 38))) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.14f, 0.65f, 0.35f, 1.0f)); // Discord Green
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.55f, 0.30f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.45f, 0.25f, 1.0f));
+                    if (ImGui::Button("START ACTIVITY", ImVec2(160, 40))) {
                         StartActivity();
                     }
-                    ImGui::PopStyleColor();
+                    ImGui::PopStyleColor(3);
                 } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-                    if (ImGui::Button("Stop Activity", ImVec2(160, 38))) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.95f, 0.25f, 0.26f, 1.0f)); // Discord Red
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.20f, 0.22f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.68f, 0.15f, 0.17f, 1.0f));
+                    if (ImGui::Button("STOP ACTIVITY", ImVec2(160, 40))) {
                         StopActivity();
                     }
-                    ImGui::PopStyleColor();
+                    ImGui::PopStyleColor(3);
                 }
 
                 ImGui::SameLine();
@@ -191,22 +203,28 @@ int main() {
                 if (isActivityActive) {
                     std::string timeStr = FormatDuration(processManager.GetElapsedTime());
                     ImGui::TextColored(
-                        ImVec4(0.2f, 0.85f, 0.3f, 1.0f),
-                        "Running: %s (%s)",
+                        ImVec4(0.14f, 0.85f, 0.35f, 1.0f),
+                        "Playing: %s (%s)",
                         gameNameBuffer,
                         timeStr.c_str()
                     );
                 } else {
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Status: %s", generalStatusMessage.c_str());
+                    ImGui::TextColored(ImVec4(0.58f, 0.61f, 0.64f, 1.0f), "Status: %s", generalStatusMessage.c_str());
                 }
 
                 if (!processManager.GetLastErrorMessage().empty()) {
                     ImGui::Spacing();
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Process Error: %s", processManager.GetLastErrorMessage().c_str());
+                    ImGui::TextColored(ImVec4(0.95f, 0.25f, 0.26f, 1.0f), "Process Error: %s", processManager.GetLastErrorMessage().c_str());
                 }
                 if (!rpcClient.GetLastError().empty()) {
                     ImGui::Spacing();
-                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "RPC Error: %s", rpcClient.GetLastError().c_str());
+                    ImGui::TextColored(ImVec4(0.95f, 0.25f, 0.26f, 1.0f), "RPC Error: %s", rpcClient.GetLastError().c_str());
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                if (ImGui::Checkbox("Minimize to tray on window close", &minimizeToTrayOnClose)) {
+                    window.SetMinimizeToTrayOnClose(minimizeToTrayOnClose);
                 }
 
                 ImGui::EndTabItem();
@@ -215,20 +233,23 @@ int main() {
             // TAB 2: Discord RPC Settings
             if (ImGui::BeginTabItem("RPC Settings")) {
                 ImGui::Spacing();
-                ImGui::Text("Discord Application Client ID:");
+                ImGui::TextColored(ImVec4(0.95f, 0.95f, 0.96f, 1.0f), "Discord Application Client ID:");
+                ImGui::SetNextItemWidth(-1);
                 ImGui::InputText("##ClientId", clientIdBuffer, sizeof(clientIdBuffer));
-                ImGui::TextDisabled("Create your own at discord.com/developers/applications");
+                ImGui::TextDisabled("Developer Portal: https://discord.com/developers/applications");
 
                 ImGui::Spacing();
-                ImGui::Text("Activity Details:");
+                ImGui::TextColored(ImVec4(0.95f, 0.95f, 0.96f, 1.0f), "Activity Details:");
+                ImGui::SetNextItemWidth(-1);
                 ImGui::InputText("##Details", detailsBuffer, sizeof(detailsBuffer));
 
                 ImGui::Spacing();
-                ImGui::Text("Activity State:");
+                ImGui::TextColored(ImVec4(0.95f, 0.95f, 0.96f, 1.0f), "Activity State:");
+                ImGui::SetNextItemWidth(-1);
                 ImGui::InputText("##State", stateBuffer, sizeof(stateBuffer));
 
                 ImGui::Spacing();
-                if (ImGui::Button("Save RPC Config", ImVec2(140, 30))) {
+                if (ImGui::Button("Save RPC Config", ImVec2(150, 32))) {
                     config.discordClientId = clientIdBuffer;
                     config.rpcDetails = detailsBuffer;
                     config.rpcState = stateBuffer;
@@ -240,9 +261,9 @@ int main() {
             }
 
             // TAB 3: Recent Games & Presets
-            if (ImGui::BeginTabItem("Presets")) {
+            if (ImGui::BeginTabItem("Presets & History")) {
                 ImGui::Spacing();
-                ImGui::Text("Recent Games (Click to select):");
+                ImGui::TextColored(ImVec4(0.95f, 0.95f, 0.96f, 1.0f), "Recent Games (Click to activate):");
                 ImGui::Separator();
 
                 for (size_t i = 0; i < config.recentGames.size(); ++i) {

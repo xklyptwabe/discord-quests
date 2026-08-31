@@ -1,4 +1,5 @@
 #include "ui/AppWindow.hpp"
+#include "ui/Theme.hpp"
 
 #include <imgui.h>
 #include <imgui_impl_win32.h>
@@ -35,8 +36,6 @@ bool AppWindow::CreateDeviceD3D(HWND hWnd) {
     sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
     UINT createDeviceFlags = 0;
-#ifdef _DEBUG
-#endif
 
     D3D_FEATURE_LEVEL featureLevel;
     const D3D_FEATURE_LEVEL featureLevelArray[2] = {
@@ -116,6 +115,51 @@ void AppWindow::CleanupRenderTarget() {
     }
 }
 
+void AppWindow::InitTrayIcon() {
+    ZeroMemory(&m_nid, sizeof(m_nid));
+    m_nid.cbSize = sizeof(NOTIFYICONDATAW);
+    m_nid.hWnd = m_hwnd;
+    m_nid.uID = 1;
+    m_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    m_nid.uCallbackMessage = WM_TRAYICON;
+    m_nid.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    wcsncpy_s(m_nid.szTip, m_title.c_str(), _TRUNCATE);
+
+    Shell_NotifyIconW(NIM_ADD, &m_nid);
+    m_trayIconAdded = true;
+}
+
+void AppWindow::RemoveTrayIcon() {
+    if (m_trayIconAdded) {
+        Shell_NotifyIconW(NIM_DELETE, &m_nid);
+        m_trayIconAdded = false;
+    }
+}
+
+void AppWindow::MinimizeToTray() {
+    ShowWindow(m_hwnd, SW_HIDE);
+}
+
+void AppWindow::RestoreFromTray() {
+    ShowWindow(m_hwnd, SW_SHOW);
+    ShowWindow(m_hwnd, SW_RESTORE);
+    SetForegroundWindow(m_hwnd);
+}
+
+void AppWindow::ShowTrayMenu() {
+    POINT pt;
+    GetCursorPos(&pt);
+
+    HMENU hMenu = CreatePopupMenu();
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_SHOW, L"Open Discord Quests");
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_EXIT, L"Exit");
+
+    SetForegroundWindow(m_hwnd);
+    TrackPopupMenu(hMenu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(hMenu);
+}
+
 LRESULT WINAPI AppWindow::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam)) {
         return true;
@@ -126,7 +170,10 @@ LRESULT WINAPI AppWindow::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
     switch (msg) {
     case WM_SIZE:
         if (wParam == SIZE_MINIMIZED) {
-            return 0;
+            if (app && app->m_minimizeToTrayOnClose) {
+                app->MinimizeToTray();
+                return 0;
+            }
         }
         if (app && app->m_d3dDevice) {
             app->m_resizeWidth = (UINT)LOWORD(lParam);
@@ -134,8 +181,40 @@ LRESULT WINAPI AppWindow::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
         }
         return 0;
 
+    case WM_TRAYICON:
+        if (LOWORD(lParam) == WM_LBUTTONDBLCLK || LOWORD(lParam) == WM_LBUTTONUP) {
+            if (app) {
+                app->RestoreFromTray();
+            }
+        } else if (LOWORD(lParam) == WM_RBUTTONUP) {
+            if (app) {
+                app->ShowTrayMenu();
+            }
+        }
+        return 0;
+
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case ID_TRAY_SHOW:
+            if (app) {
+                app->RestoreFromTray();
+            }
+            break;
+        case ID_TRAY_EXIT:
+            PostQuitMessage(0);
+            break;
+        }
+        return 0;
+
+    case WM_CLOSE:
+        if (app && app->m_minimizeToTrayOnClose) {
+            app->MinimizeToTray();
+            return 0;
+        }
+        break;
+
     case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0) == SC_KEYMENU) { // Disable ALT application menu
+        if ((wParam & 0xfff0) == SC_KEYMENU) {
             return 0;
         }
         break;
@@ -149,7 +228,7 @@ LRESULT WINAPI AppWindow::WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPa
 }
 
 bool AppWindow::Initialize(const std::wstring& title, int width, int height) {
-    // Enable High-DPI awareness
+    m_title = title;
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     m_wc = {
@@ -169,7 +248,6 @@ bool AppWindow::Initialize(const std::wstring& title, int width, int height) {
 
     RegisterClassExW(&m_wc);
 
-    // Center window on screen
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
     int posX = (screenWidth - width) / 2;
@@ -195,7 +273,6 @@ bool AppWindow::Initialize(const std::wstring& title, int width, int height) {
 
     SetWindowLongPtr(m_hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
 
-    // Enable Windows 10/11 dark titlebar
     BOOL useDarkMode = TRUE;
     DwmSetWindowAttribute(m_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &useDarkMode, sizeof(useDarkMode));
 
@@ -205,24 +282,18 @@ bool AppWindow::Initialize(const std::wstring& title, int width, int height) {
         return false;
     }
 
+    InitTrayIcon();
+
     ShowWindow(m_hwnd, SW_SHOWDEFAULT);
     UpdateWindow(m_hwnd);
 
-    // Initialize ImGui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    // Configure theme
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 8.0f;
-    style.FrameRounding = 5.0f;
-    style.PopupRounding = 5.0f;
-    style.ScrollbarRounding = 5.0f;
-    style.GrabRounding = 5.0f;
-    style.TabRounding = 5.0f;
+    // Apply custom Discord theme
+    ApplyDiscordTheme();
 
     ImGui_ImplWin32_Init(m_hwnd);
     ImGui_ImplDX11_Init(m_d3dDevice, m_d3dDeviceContext);
@@ -245,7 +316,6 @@ void AppWindow::Run(const std::function<void()>& renderCallback) {
             break;
         }
 
-        // Handle window resize
         if (m_resizeWidth != 0 && m_resizeHeight != 0) {
             CleanupRenderTarget();
             m_pSwapChain->ResizeBuffers(0, m_resizeWidth, m_resizeHeight, DXGI_FORMAT_UNKNOWN, 0);
@@ -253,30 +323,28 @@ void AppWindow::Run(const std::function<void()>& renderCallback) {
             CreateRenderTarget();
         }
 
-        // Start ImGui frame
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // Render application UI
         if (renderCallback) {
             renderCallback();
         }
 
-        // Render draw data
         ImGui::Render();
-        const float clear_color[4] = { 0.11f, 0.12f, 0.14f, 1.00f };
+        const float clear_color[4] = { 0.118f, 0.122f, 0.133f, 1.00f }; // #1E1F22
         m_d3dDeviceContext->OMSetRenderTargets(1, &m_mainRenderTargetView, nullptr);
         m_d3dDeviceContext->ClearRenderTargetView(m_mainRenderTargetView, clear_color);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
-        // Present with VSync
         HRESULT hr = m_pSwapChain->Present(1, 0);
         m_swapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
     }
 }
 
 void AppWindow::Shutdown() {
+    RemoveTrayIcon();
+
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
@@ -293,4 +361,4 @@ void AppWindow::Shutdown() {
     }
 }
 
-} 
+} // namespace ui

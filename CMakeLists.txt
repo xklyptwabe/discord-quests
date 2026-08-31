@@ -64,6 +64,7 @@ add_executable(DiscordQuests
     src/main.cpp
     src/ui/AppWindow.cpp
     include/ui/AppWindow.hpp
+    include/ui/Theme.hpp
     src/core/ProcessManager.cpp
     include/core/ProcessManager.hpp
     src/core/DiscordRpcClient.cpp
@@ -85,6 +86,7 @@ target_link_libraries(DiscordQuests PRIVATE
     dxgi
     d3dcompiler
     dwmapi
+    shell32
 )
 
 target_compile_features(DiscordQuests PRIVATE cxx_std_20)
