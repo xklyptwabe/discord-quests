@@ -76,10 +76,16 @@ bool ProcessManager::StartGame(const std::string& gameName) {
         return false;
     }
 
-    // Ensure .exe extension
+    // Ensure .exe extension for process filename
     std::string exeName = sanitized;
     if (exeName.length() < 4 || exeName.substr(exeName.length() - 4) != ".exe") {
         exeName += ".exe";
+    }
+
+    // Extract raw title without .exe for window caption
+    std::string gameTitle = sanitized;
+    if (gameTitle.length() >= 4 && gameTitle.substr(gameTitle.length() - 4) == ".exe") {
+        gameTitle = gameTitle.substr(0, gameTitle.length() - 4);
     }
 
     std::filesystem::path workingDir = GetWorkingDir();
@@ -116,15 +122,20 @@ bool ProcessManager::StartGame(const std::string& gameName) {
     si.dwFlags = STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
 
-    std::wstring commandLine = targetExePath.wstring();
+    // Convert game title to wide string for command line argument
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, gameTitle.c_str(), -1, nullptr, 0);
+    std::wstring wGameTitle(wlen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, gameTitle.c_str(), -1, wGameTitle.data(), wlen);
+
+    std::wstring commandLine = L"\"" + targetExePath.wstring() + L"\" \"" + wGameTitle + L"\"";
 
     BOOL success = CreateProcessW(
-        nullptr,
+        targetExePath.c_str(),
         commandLine.data(),
         nullptr,
         nullptr,
         FALSE,
-        CREATE_NO_WINDOW,
+        0,
         nullptr,
         workingDir.c_str(),
         &si,
@@ -140,7 +151,7 @@ bool ProcessManager::StartGame(const std::string& gameName) {
     m_processHandle = pi.hProcess;
     m_threadHandle = pi.hThread;
     m_processId = pi.dwProcessId;
-    m_currentGameName = sanitized;
+    m_currentGameName = gameTitle;
     m_currentExePath = targetExePath;
     m_startTime = std::chrono::steady_clock::now();
 
@@ -223,4 +234,4 @@ std::string ProcessManager::GetLastErrorMessage() const {
     return m_lastError;
 }
 
-}
+} // namespace core
