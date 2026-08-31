@@ -68,6 +68,8 @@ add_executable(DiscordQuests
     include/core/ProcessManager.hpp
     src/core/DiscordRpcClient.cpp
     include/core/DiscordRpcClient.hpp
+    src/core/ConfigManager.cpp
+    include/core/ConfigManager.hpp
 )
 
 add_dependencies(DiscordQuests discord_dummy_stub)

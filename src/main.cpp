@@ -1,9 +1,13 @@
 #include "ui/AppWindow.hpp"
 #include "core/ProcessManager.hpp"
+#include "core/DiscordRpcClient.hpp"
+#include "core/ConfigManager.hpp"
 #include <imgui.h>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
+#include <cstring>
+#include <algorithm>
 
 namespace {
 
@@ -21,17 +25,98 @@ std::string FormatDuration(std::chrono::seconds totalSeconds) {
     return oss.str();
 }
 
-} 
+} // anonymous namespace
 
 int main() {
     ui::AppWindow window;
-    if (!window.Initialize(L"Discord Quests & Activity Emulator", 650, 480)) {
+    if (!window.Initialize(L"Discord Quests & Activity Emulator", 680, 520)) {
         std::cerr << "[ERROR] Failed to initialize application window." << std::endl;
         return 1;
     }
 
+    core::AppConfig config;
+    core::ConfigManager::Load(config);
+
     core::ProcessManager processManager;
-    char gameNameBuffer[128] = "Grand Theft Auto VI";
+    core::DiscordRpcClient rpcClient;
+
+    char gameNameBuffer[128];
+    char clientIdBuffer[64];
+    char detailsBuffer[128];
+    char stateBuffer[128];
+
+    auto SyncBuffersFromConfig = [&]() {
+        strncpy_s(gameNameBuffer, sizeof(gameNameBuffer), config.lastGameName.c_str(), _TRUNCATE);
+        strncpy_s(clientIdBuffer, sizeof(clientIdBuffer), config.discordClientId.c_str(), _TRUNCATE);
+        strncpy_s(detailsBuffer, sizeof(detailsBuffer), config.rpcDetails.c_str(), _TRUNCATE);
+        strncpy_s(stateBuffer, sizeof(stateBuffer), config.rpcState.c_str(), _TRUNCATE);
+    };
+
+    SyncBuffersFromConfig();
+
+    bool isActivityActive = false;
+    std::string generalStatusMessage = "Ready";
+
+    auto StartActivity = [&]() {
+        config.lastGameName = gameNameBuffer;
+        config.discordClientId = clientIdBuffer;
+        config.rpcDetails = detailsBuffer;
+        config.rpcState = stateBuffer;
+
+        // Add to recent list if not present
+        auto it = std::find(config.recentGames.begin(), config.recentGames.end(), config.lastGameName);
+        if (it != config.recentGames.end()) {
+            config.recentGames.erase(it);
+        }
+        config.recentGames.insert(config.recentGames.begin(), config.lastGameName);
+        if (config.recentGames.size() > 10) {
+            config.recentGames.pop_back();
+        }
+
+        core::ConfigManager::Save(config);
+
+        bool procOk = true;
+        bool rpcOk = true;
+
+        if (config.mode == core::ActivityMode::ProcessEmulation || config.mode == core::ActivityMode::Hybrid) {
+            procOk = processManager.StartGame(config.lastGameName);
+        }
+
+        if (config.mode == core::ActivityMode::DiscordRpc || config.mode == core::ActivityMode::Hybrid) {
+            if (rpcClient.Connect(config.discordClientId)) {
+                core::DiscordActivity act;
+                act.details = config.rpcDetails.empty() ? ("Playing " + config.lastGameName) : config.rpcDetails;
+                act.state = config.rpcState.empty() ? "In Game" : config.rpcState;
+                act.startTimestamp = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::system_clock::now().time_since_epoch()
+                ).count();
+                act.largeImageKey = config.rpcLargeImage;
+                act.largeImageText = config.lastGameName;
+                rpcClient.SetActivity(act);
+            } else {
+                rpcOk = false;
+            }
+        }
+
+        if (procOk || rpcOk) {
+            isActivityActive = true;
+            generalStatusMessage = "Activity running successfully";
+        } else {
+            isActivityActive = false;
+            generalStatusMessage = "Failed to start activity";
+        }
+    };
+
+    auto StopActivity = [&]() {
+        if (processManager.IsRunning()) {
+            processManager.StopGame();
+        }
+        if (rpcClient.IsConnected()) {
+            rpcClient.Disconnect();
+        }
+        isActivityActive = false;
+        generalStatusMessage = "Activity stopped";
+    };
 
     window.Run([&]() {
         ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -44,59 +129,142 @@ int main() {
 
         ImGui::Begin("MainPanel", nullptr, flags);
 
+        // Header Title
         ImGui::TextColored(ImVec4(0.35f, 0.65f, 1.0f, 1.0f), "Discord Quests & Activity Emulator");
+        ImGui::SameLine(ImGui::GetWindowWidth() - 140);
+        ImGui::TextDisabled("v1.0.0 (C++20)");
         ImGui::Separator();
         ImGui::Spacing();
 
-        ImGui::Text("Enter Target Game Name:");
-        const bool isRunning = processManager.IsRunning();
+        if (ImGui::BeginTabBar("Tabs")) {
+            // TAB 1: Main Control
+            if (ImGui::BeginTabItem("Main Activity")) {
+                ImGui::Spacing();
+                ImGui::Text("Select Emulation Mode:");
 
-        if (isRunning) {
-            ImGui::BeginDisabled();
-        }
-        ImGui::InputText("##GameName", gameNameBuffer, sizeof(gameNameBuffer));
-        if (isRunning) {
-            ImGui::EndDisabled();
-        }
+                int currentMode = static_cast<int>(config.mode);
+                if (isActivityActive) {
+                    ImGui::BeginDisabled();
+                }
+                ImGui::RadioButton("Process Emulation (.exe)", &currentMode, 0);
+                ImGui::SameLine();
+                ImGui::RadioButton("Discord RPC", &currentMode, 1);
+                ImGui::SameLine();
+                ImGui::RadioButton("Hybrid (Both)", &currentMode, 2);
+                if (isActivityActive) {
+                    ImGui::EndDisabled();
+                }
+                config.mode = static_cast<core::ActivityMode>(currentMode);
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+                ImGui::Spacing();
+                ImGui::Text("Target Game Name:");
+                if (isActivityActive) {
+                    ImGui::BeginDisabled();
+                }
+                ImGui::InputText("##GameName", gameNameBuffer, sizeof(gameNameBuffer));
+                if (isActivityActive) {
+                    ImGui::EndDisabled();
+                }
 
-        if (!isRunning) {
-            if (ImGui::Button("Start Activity", ImVec2(150, 36))) {
-                processManager.StartGame(gameNameBuffer);
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+
+                // Start / Stop Button
+                if (!isActivityActive) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.3f, 1.0f));
+                    if (ImGui::Button("Start Activity", ImVec2(160, 38))) {
+                        StartActivity();
+                    }
+                    ImGui::PopStyleColor();
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                    if (ImGui::Button("Stop Activity", ImVec2(160, 38))) {
+                        StopActivity();
+                    }
+                    ImGui::PopStyleColor();
+                }
+
+                ImGui::SameLine();
+                ImGui::AlignTextToFramePadding();
+
+                if (isActivityActive) {
+                    std::string timeStr = FormatDuration(processManager.GetElapsedTime());
+                    ImGui::TextColored(
+                        ImVec4(0.2f, 0.85f, 0.3f, 1.0f),
+                        "Running: %s (%s)",
+                        gameNameBuffer,
+                        timeStr.c_str()
+                    );
+                } else {
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Status: %s", generalStatusMessage.c_str());
+                }
+
+                if (!processManager.GetLastErrorMessage().empty()) {
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Process Error: %s", processManager.GetLastErrorMessage().c_str());
+                }
+                if (!rpcClient.GetLastError().empty()) {
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "RPC Error: %s", rpcClient.GetLastError().c_str());
+                }
+
+                ImGui::EndTabItem();
             }
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-            if (ImGui::Button("Stop Activity", ImVec2(150, 36))) {
-                processManager.StopGame();
+
+            // TAB 2: Discord RPC Settings
+            if (ImGui::BeginTabItem("RPC Settings")) {
+                ImGui::Spacing();
+                ImGui::Text("Discord Application Client ID:");
+                ImGui::InputText("##ClientId", clientIdBuffer, sizeof(clientIdBuffer));
+                ImGui::TextDisabled("Create your own at discord.com/developers/applications");
+
+                ImGui::Spacing();
+                ImGui::Text("Activity Details:");
+                ImGui::InputText("##Details", detailsBuffer, sizeof(detailsBuffer));
+
+                ImGui::Spacing();
+                ImGui::Text("Activity State:");
+                ImGui::InputText("##State", stateBuffer, sizeof(stateBuffer));
+
+                ImGui::Spacing();
+                if (ImGui::Button("Save RPC Config", ImVec2(140, 30))) {
+                    config.discordClientId = clientIdBuffer;
+                    config.rpcDetails = detailsBuffer;
+                    config.rpcState = stateBuffer;
+                    core::ConfigManager::Save(config);
+                    generalStatusMessage = "RPC Settings saved";
+                }
+
+                ImGui::EndTabItem();
             }
-            ImGui::PopStyleColor();
-        }
 
-        ImGui::SameLine();
-        ImGui::AlignTextToFramePadding();
+            // TAB 3: Recent Games & Presets
+            if (ImGui::BeginTabItem("Presets")) {
+                ImGui::Spacing();
+                ImGui::Text("Recent Games (Click to select):");
+                ImGui::Separator();
 
-        if (isRunning) {
-            std::string timeStr = FormatDuration(processManager.GetElapsedTime());
-            ImGui::TextColored(
-                ImVec4(0.2f, 0.85f, 0.3f, 1.0f),
-                "Status: Active -> Playing %s.exe (%s)",
-                processManager.GetCurrentGameName().c_str(),
-                timeStr.c_str()
-            );
-        } else {
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Status: Idle");
-        }
+                for (size_t i = 0; i < config.recentGames.size(); ++i) {
+                    const auto& game = config.recentGames[i];
+                    if (ImGui::Selectable(game.c_str(), game == gameNameBuffer)) {
+                        strncpy_s(gameNameBuffer, sizeof(gameNameBuffer), game.c_str(), _TRUNCATE);
+                        config.lastGameName = game;
+                        core::ConfigManager::Save(config);
+                    }
+                }
 
-        if (!processManager.GetLastErrorMessage().empty()) {
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Error: %s", processManager.GetLastErrorMessage().c_str());
+                ImGui::EndTabItem();
+            }
+
+            ImGui::EndTabBar();
         }
 
         ImGui::End();
     });
 
+    // Cleanup on exit
+    StopActivity();
+    core::ConfigManager::Save(config);
     return 0;
 }
