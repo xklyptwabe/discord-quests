@@ -34,6 +34,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
+# Fetch nlohmann_json
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # ImGui static library with Win32 and DirectX 11 backends
 add_library(imgui_lib STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -57,6 +66,8 @@ add_executable(DiscordQuests
     include/ui/AppWindow.hpp
     src/core/ProcessManager.cpp
     include/core/ProcessManager.hpp
+    src/core/DiscordRpcClient.cpp
+    include/core/DiscordRpcClient.hpp
 )
 
 add_dependencies(DiscordQuests discord_dummy_stub)
@@ -67,6 +78,7 @@ target_include_directories(DiscordQuests PRIVATE
 
 target_link_libraries(DiscordQuests PRIVATE
     imgui_lib
+    nlohmann_json::nlohmann_json
     d3d11
     dxgi
     d3dcompiler
